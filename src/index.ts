@@ -48,6 +48,10 @@ export interface ModelPrice {
  */
 export const MODEL_PRICES: Record<string, ModelPrice> = {
   // ── Anthropic (per-MTok list price; opus 4.5+ is $5/$25) ──
+  // Opus 5 is a fixed id with NO date suffix, and lands at the same $5/$25 as the
+  // 4.5+ Opus tier (verified 2026-08-11 against the claude-api model catalog:
+  // 1M context, 128K max output, effort low→max, thinking on by default).
+  'claude-opus-5': { in: 5.0, out: 25.0 },
   'claude-opus-4-8': { in: 5.0, out: 25.0 },
   'claude-opus-4-7': { in: 5.0, out: 25.0 },
   'claude-opus-4-6': { in: 5.0, out: 25.0 },
