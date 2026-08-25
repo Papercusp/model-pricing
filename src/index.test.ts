@@ -35,6 +35,10 @@ describe('priceFor', () => {
     // 'gpt-5.5-2026-01' must match gpt-5.5, not the shorter gpt-5
     expect(priceFor('gpt-5.5-2026-01')).toEqual(MODEL_PRICES['gpt-5.5']);
   });
+  test('current Claude 5 model specs resolve through context and effort suffixes', () => {
+    expect(priceFor('claude-sonnet-5[1m]:high')).toEqual(MODEL_PRICES['claude-sonnet-5']);
+    expect(priceFor('claude-fable-5[1m]:xhigh')).toEqual(MODEL_PRICES['claude-fable-5']);
+  });
   test('unknown model → null (omp local models, empty string)', () => {
     expect(priceFor('qwen2.5-coder:14b')).toBeNull();
     expect(priceFor('')).toBeNull();
@@ -62,6 +66,14 @@ describe('costFromTokens', () => {
     expect(priced).toBe(true);
     // 0.8×1.25 + 0.2×0.125 + 0.1×10 = 1 + 0.025 + 1
     expect(usd).toBeCloseTo(2.025, 6);
+  });
+  test.each([
+    ['claude-sonnet-5[1m]:high', 18],
+    ['claude-fable-5[1m]:xhigh', 60],
+  ])('current Claude 5 model %s is priced instead of persisted as NULL', (model, expectedUsd) => {
+    expect(
+      costFromTokens(model, { inputTokens: 1_000_000, outputTokens: 1_000_000 }),
+    ).toEqual({ usd: expectedUsd, priced: true });
   });
   test('unknown model → priced:false, usd 0 (caller persists NULL, not 0)', () => {
     expect(costFromTokens('qwen2.5-coder:14b', { inputTokens: 5000 })).toEqual({

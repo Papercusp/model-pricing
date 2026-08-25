@@ -59,10 +59,12 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   // Legacy opus (4.1 and earlier) kept the old price point.
   'claude-opus-4-1': { in: 15.0, out: 75.0 },
   'claude-opus-4-0': { in: 15.0, out: 75.0 },
+  'claude-sonnet-5': { in: 3.0, out: 15.0 },
   'claude-sonnet-4-6': { in: 3.0, out: 15.0 },
   'claude-sonnet-4-5': { in: 3.0, out: 15.0 },
   'claude-sonnet-4-0': { in: 3.0, out: 15.0 },
   'claude-haiku-4-5': { in: 1.0, out: 5.0 },
+  'claude-fable-5': { in: 10.0, out: 50.0 },
 
   // ── OpenAI (codex CLI models; cached input is 0.1× for the gpt-5 family,
   //    no cache-write premium) ──
