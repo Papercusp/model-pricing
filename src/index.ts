@@ -66,10 +66,15 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   'claude-haiku-4-5': { in: 1.0, out: 5.0 },
   'claude-fable-5': { in: 10.0, out: 50.0 },
 
-  // ── OpenAI (codex CLI models; cached input is 0.1× for the gpt-5 family,
-  //    no cache-write premium) ──
+  // ── OpenAI (codex CLI models; cached input is 0.1× for the gpt-5 family) ──
   'gpt-5': { in: 1.25, out: 10.0, cacheRead: 0.125, cacheWrite: 1.25 },
-  'gpt-5.6': { in: 1.875, out: 15.0, cacheRead: 0.1875, cacheWrite: 1.875 },
+  // Distinct 5.6 tiers; the unsuffixed alias is Sol. Verified 2026-09-09:
+  // https://developers.openai.com/api/docs/models/gpt-5.6-sol
+  // https://developers.openai.com/api/docs/models/gpt-5.6-luna
+  // Standard-context list rates; these are usage estimates, not provider invoices.
+  'gpt-5.6': { in: 4.0, out: 20.0, cacheRead: 0.4, cacheWrite: 5.0 },
+  'gpt-5.6-sol': { in: 4.0, out: 20.0, cacheRead: 0.4, cacheWrite: 5.0 },
+  'gpt-5.6-luna': { in: 0.2, out: 1.2, cacheRead: 0.02, cacheWrite: 0.25 },
   'gpt-5.5': { in: 2.5, out: 20.0, cacheRead: 0.25, cacheWrite: 2.5 },
   // OpenAI-direct models used by LLM-testing hosts (e.g. Restart's Scout SUT).
   'gpt-4o-mini': { in: 0.15, out: 0.6 },

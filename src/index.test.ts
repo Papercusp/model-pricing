@@ -46,6 +46,19 @@ describe('priceFor', () => {
 });
 
 describe('costFromTokens', () => {
+  test.each([
+    ['gpt-5.6-luna:medium', 1.258],
+    ['openai-codex/gpt-5.6-sol:xhigh', 21.16],
+    ['gpt-5.6', 21.16],
+  ])('prices %s using its own tier, including cached reads and writes', (model, expected) => {
+    expect(costFromTokens(model, {
+      inputTokens: 100_000, outputTokens: 1_000_000,
+      cacheReadTokens: 400_000, cacheCreationTokens: 120_000,
+    })).toEqual({ usd: expected, priced: true });
+  });
+  test('a dated Luna variant uses the Luna rate instead of the family alias', () => {
+    expect(estimateCost('gpt-5.6-luna-2026-09', 1_000_000, 1_000_000)).toBeCloseTo(1.4);
+  });
   test('claude: input+output+cache defaults', () => {
     const { usd, priced } = costFromTokens('claude-opus-4-8', {
       inputTokens: 1_000_000,
