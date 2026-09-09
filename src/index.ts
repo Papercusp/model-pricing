@@ -75,6 +75,9 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   'gpt-5.6': { in: 4.0, out: 20.0, cacheRead: 0.4, cacheWrite: 5.0 },
   'gpt-5.6-sol': { in: 4.0, out: 20.0, cacheRead: 0.4, cacheWrite: 5.0 },
   'gpt-5.6-luna': { in: 0.2, out: 1.2, cacheRead: 0.02, cacheWrite: 0.25 },
+  // https://developers.openai.com/api/docs/models/compare (verified 2026-09-09)
+  'gpt-5.6-terra': { in: 2.0, out: 12.0, cacheRead: 0.2, cacheWrite: 2.5 },
+  'gpt-6-astra': { in: 10.0, out: 50.0, cacheRead: 1.0, cacheWrite: 12.5 },
   'gpt-5.5': { in: 2.5, out: 20.0, cacheRead: 0.25, cacheWrite: 2.5 },
   // OpenAI-direct models used by LLM-testing hosts (e.g. Restart's Scout SUT).
   'gpt-4o-mini': { in: 0.15, out: 0.6 },

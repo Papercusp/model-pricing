@@ -50,6 +50,8 @@ describe('costFromTokens', () => {
     ['gpt-5.6-luna:medium', 1.258],
     ['openai-codex/gpt-5.6-sol:xhigh', 21.16],
     ['gpt-5.6', 21.16],
+    ['gpt-5.6-terra:high', 12.58],
+    ['gpt-6-astra:xhigh', 52.9],
   ])('prices %s using its own tier, including cached reads and writes', (model, expected) => {
     expect(costFromTokens(model, {
       inputTokens: 100_000, outputTokens: 1_000_000,
