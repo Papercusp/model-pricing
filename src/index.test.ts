@@ -82,6 +82,39 @@ describe('costFromTokens', () => {
     // 0.8×1.25 + 0.2×0.125 + 0.1×10 = 1 + 0.025 + 1
     expect(usd).toBeCloseTo(2.025, 6);
   });
+  test('prices one-hour Claude writes at twice base, without charging the aggregate again', () => {
+    const actual = costFromTokens('claude-opus-4-8', {
+      inputTokens: 100_000,
+      cacheReadTokens: 2_000_000,
+      cacheCreationTokens: 1_000_000,
+      cacheCreation5mTokens: 0,
+      cacheCreation1hTokens: 1_000_000,
+    });
+    expect(actual).toEqual({ priced: true, usd: 11.5 });
+    // Calibration: the old five-minute-only formula underprices this fixture.
+    const oldEstimate = 0.5 + 1 + 6.25;
+    expect(actual.usd).not.toBe(oldEstimate);
+  });
+  test('prices a mixed TTL response from its disjoint tier counters', () => {
+    expect(costFromTokens('claude-sonnet-4-6', {
+      cacheCreationTokens: 2_000_000,
+      cacheCreation5mTokens: 1_500_000,
+      cacheCreation1hTokens: 500_000,
+    })).toEqual({ priced: true, usd: 8.625 });
+    expect(costFromTokens('claude-sonnet-4-6', {
+      cacheCreation5mTokens: 1_500_000,
+      cacheCreation1hTokens: 500_000,
+    })).toEqual({ priced: true, usd: 8.625 });
+  });
+  test.each([
+    { cacheCreationTokens: 1000, cacheCreation1hTokens: 1000 },
+    { cacheCreationTokens: 1000, cacheCreation5mTokens: 0, cacheCreation1hTokens: 999 },
+    { cacheCreationTokens: 1000, cacheCreation5mTokens: -1, cacheCreation1hTokens: 1001 },
+    { cacheCreationTokens: 1000, cacheCreation5mTokens: Number.NaN, cacheCreation1hTokens: 1000 },
+    { cacheCreationTokens: 1000, cacheCreationTierUnknown: true },
+  ])('does not fabricate a cost for missing or inconsistent reported write tiers: %j', (usage) => {
+    expect(costFromTokens('claude-opus-4-8', usage)).toEqual({ priced: false, usd: 0 });
+  });
   test.each([
     ['claude-sonnet-5[1m]:high', 18],
     ['claude-fable-5[1m]:xhigh', 60],

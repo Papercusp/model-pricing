@@ -14,7 +14,8 @@
  *   - `inputTokens` means UNCACHED input tokens (Anthropic's `usage.input_tokens`
  *     semantics — cache reads/writes are separate fields). Extractors for
  *     OpenAI-style usage (where `input_tokens` includes `cached_input_tokens`)
- *     must subtract the cached subset before calling `costFromTokens`.
+ *     must subtract both cached-read and cache-write subsets before calling
+ *     `costFromTokens`.
  *   - Cache-read defaults to 0.1× input (Anthropic documented multiplier; the
  *     gpt-5 family's cached-input price is also 0.1×). Cache-creation defaults
  *     to 1.25× input (Anthropic 5-minute-TTL write premium; OpenAI has no write
@@ -119,12 +120,17 @@ export interface TokenUsage {
   outputTokens?: number;
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
+  /** Reported Anthropic cache-write tiers; provide both, including measured zeroes. */
+  cacheCreation5mTokens?: number;
+  cacheCreation1hTokens?: number;
+  /** A source knows writes occurred but did not report their TTL. Do not guess a price. */
+  cacheCreationTierUnknown?: boolean;
 }
 
 export interface CostEstimate {
   /** Estimated USD at list price. 0 when `priced` is false. */
   usd: number;
-  /** False when the model isn't in the table — persist NULL, not 0. */
+  /** False for an unknown model or unreconciled write tier — persist NULL, not 0. */
   priced: boolean;
 }
 
@@ -136,11 +142,29 @@ export function costFromTokens(model: string, usage: TokenUsage): CostEstimate {
     typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0;
   const cacheRead = p.cacheRead ?? p.in * 0.1;
   const cacheWrite = p.cacheWrite ?? p.in * 1.25;
+  let writeCost = n(usage.cacheCreationTokens) * cacheWrite;
+  const hasWriteTiers = usage.cacheCreation5mTokens !== undefined || usage.cacheCreation1hTokens !== undefined;
+  if (hasWriteTiers) {
+    const fiveMinute = usage.cacheCreation5mTokens;
+    const oneHour = usage.cacheCreation1hTokens;
+    // A partial or inconsistent breakdown is not evidence that the residue used
+    // the cheaper tier. Return an unpriced estimate instead of hiding the gap.
+    if (
+      typeof fiveMinute !== 'number' || !Number.isFinite(fiveMinute) || fiveMinute < 0 ||
+      typeof oneHour !== 'number' || !Number.isFinite(oneHour) || oneHour < 0 ||
+      (usage.cacheCreationTokens !== undefined && usage.cacheCreationTokens !== fiveMinute + oneHour)
+    ) return { usd: 0, priced: false };
+    // These tier fields are provider-reported Anthropic quantities. The aggregate
+    // is a reconciliation check, not a second set of tokens to charge for.
+    writeCost = fiveMinute * p.in * 1.25 + oneHour * p.in * 2;
+  } else if (usage.cacheCreationTierUnknown && n(usage.cacheCreationTokens) > 0) {
+    return { usd: 0, priced: false };
+  }
   const usd =
     (n(usage.inputTokens) * p.in +
       n(usage.outputTokens) * p.out +
       n(usage.cacheReadTokens) * cacheRead +
-      n(usage.cacheCreationTokens) * cacheWrite) /
+      writeCost) /
     1_000_000;
   return { usd, priced: true };
 }
