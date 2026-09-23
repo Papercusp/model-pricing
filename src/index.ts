@@ -115,9 +115,9 @@ export function normalizeModelId(model: string): string {
 /** Resolve a price entry. Exact (raw, then normalized), then longest-prefix match. Null when unknown. */
 export function priceFor(model: string): ModelPrice | null {
   if (!model) return null;
-  if (MODEL_PRICES[model]) return MODEL_PRICES[model];
+  if (Object.hasOwn(MODEL_PRICES, model)) return MODEL_PRICES[model];
   const norm = normalizeModelId(model);
-  if (MODEL_PRICES[norm]) return MODEL_PRICES[norm];
+  if (Object.hasOwn(MODEL_PRICES, norm)) return MODEL_PRICES[norm];
   let best: string | null = null;
   for (const key of Object.keys(MODEL_PRICES)) {
     // Only dated snapshots inherit a price. A future family/tier is unknown,

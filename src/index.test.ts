@@ -20,6 +20,10 @@ describe('normalizeModelId', () => {
 });
 
 describe('priceFor', () => {
+  test.each(['constructor', '__proto__', 'toString', 'vendor/constructor:high'])('inherited property %s is unpriced', (model) => {
+    expect(priceFor(model)).toBeNull();
+    expect(costFromTokens(model, { inputTokens: 10 })).toMatchObject({ priced: false });
+  });
   test('exact bare id', () => {
     expect(priceFor('claude-opus-4-8')).toEqual({ in: 5.0, out: 25.0 });
   });
