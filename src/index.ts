@@ -18,9 +18,8 @@
  *     `costFromTokens`.
  *   - Cache-read defaults to 0.1× input (Anthropic documented multiplier; the
  *     gpt-5 family's cached-input price is also 0.1×). Cache-creation defaults
- *     to 1.25× input (Anthropic 5-minute-TTL write premium; OpenAI has no write
- *     premium and reports no cache-creation count, so the default never fires
- *     there).
+ *     to 1.25× input (Anthropic 5-minute-TTL write premium; GPT-6 also reports
+ *     explicit write tokens with its documented 1.25× rate).
  *   - Unknown model → `priced: false`, usd 0. Never $0-guess a real model:
  *     callers persist NULL cost rather than a fabricated zero.
  *
@@ -39,6 +38,8 @@ export interface ModelPrice {
   cacheRead?: number;
   /** USD per 1M cache-creation tokens. Default: `in × 1.25`. */
   cacheWrite?: number;
+  /** Full-request input threshold; not an aggregate across multiple requests. */
+  longContext?: { above: number; inputMultiplier: number; outputMultiplier: number };
 }
 
 /**
@@ -53,6 +54,8 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   // 4.5+ Opus tier (verified 2026-08-11 against the claude-api model catalog:
   // 1M context, 128K max output, effort low→max, thinking on by default).
   'claude-opus-5': { in: 5.0, out: 25.0 },
+  // Verified 2026-09-23: https://platform.claude.com/docs/en/about-claude/pricing
+  'claude-opus-5-5': { in: 4.0, out: 20.0, cacheRead: 0.2 },
   'claude-opus-4-8': { in: 5.0, out: 25.0 },
   'claude-opus-4-7': { in: 5.0, out: 25.0 },
   'claude-opus-4-6': { in: 5.0, out: 25.0 },
@@ -60,12 +63,13 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   // Legacy opus (4.1 and earlier) kept the old price point.
   'claude-opus-4-1': { in: 15.0, out: 75.0 },
   'claude-opus-4-0': { in: 15.0, out: 75.0 },
-  'claude-sonnet-5': { in: 3.0, out: 15.0 },
+  'claude-sonnet-5': { in: 2.0, out: 10.0 },
   'claude-sonnet-4-6': { in: 3.0, out: 15.0 },
   'claude-sonnet-4-5': { in: 3.0, out: 15.0 },
   'claude-sonnet-4-0': { in: 3.0, out: 15.0 },
   'claude-haiku-4-5': { in: 1.0, out: 5.0 },
   'claude-fable-5': { in: 10.0, out: 50.0 },
+  'claude-fable-5-1': { in: 10.0, out: 50.0, cacheRead: 0.25 },
 
   // ── OpenAI (codex CLI models; cached input is 0.1× for the gpt-5 family) ──
   'gpt-5': { in: 1.25, out: 10.0, cacheRead: 0.125, cacheWrite: 1.25 },
@@ -78,7 +82,15 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   'gpt-5.6-luna': { in: 0.2, out: 1.2, cacheRead: 0.02, cacheWrite: 0.25 },
   // https://developers.openai.com/api/docs/models/compare (verified 2026-09-09)
   'gpt-5.6-terra': { in: 2.0, out: 12.0, cacheRead: 0.2, cacheWrite: 2.5 },
-  'gpt-6-astra': { in: 10.0, out: 50.0, cacheRead: 1.0, cacheWrite: 12.5 },
+  // Verified 2026-09-23: https://developers.openai.com/api/docs/models/gpt-6-astra
+  // https://developers.openai.com/api/docs/models/gpt-6-sol and /gpt-6-luna.
+  // Standard, global list prices. Subscription estimates are not invoices.
+  'gpt-6-astra': { in: 10.0, out: 50.0, cacheRead: 1.0, cacheWrite: 12.5,
+    longContext: { above: 272_000, inputMultiplier: 2, outputMultiplier: 1.5 } },
+  'gpt-6-sol': { in: 2.0, out: 10.0, cacheRead: 0.2, cacheWrite: 2.5,
+    longContext: { above: 272_000, inputMultiplier: 2, outputMultiplier: 1.5 } },
+  'gpt-6-luna': { in: 0.1, out: 0.5, cacheRead: 0.01, cacheWrite: 0.125,
+    longContext: { above: 272_000, inputMultiplier: 2, outputMultiplier: 1.5 } },
   'gpt-5.5': { in: 2.5, out: 20.0, cacheRead: 0.25, cacheWrite: 2.5 },
   // OpenAI-direct models used by LLM-testing hosts (e.g. Restart's Scout SUT).
   'gpt-4o-mini': { in: 0.15, out: 0.6 },
@@ -96,6 +108,7 @@ export function normalizeModelId(model: string): string {
   if (slash >= 0) m = m.slice(slash + 1);
   const colon = m.indexOf(':');
   if (colon >= 0) m = m.slice(0, colon);
+  m = m.replace(/\[[^\]]+\]$/, '');
   return m;
 }
 
@@ -107,7 +120,9 @@ export function priceFor(model: string): ModelPrice | null {
   if (MODEL_PRICES[norm]) return MODEL_PRICES[norm];
   let best: string | null = null;
   for (const key of Object.keys(MODEL_PRICES)) {
-    if (norm.startsWith(key) && (best === null || key.length > best.length)) {
+    // Only dated snapshots inherit a price. A future family/tier is unknown,
+    // not automatically the price of an older prefix (e.g. gpt-5.99 → gpt-5).
+    if (norm.startsWith(key) && /^-(?:\d{8}|\d{4}-\d{2}(?:-\d{2})?)$/.test(norm.slice(key.length)) && (best === null || key.length > best.length)) {
       best = key;
     }
   }
@@ -115,6 +130,8 @@ export function priceFor(model: string): ModelPrice | null {
 }
 
 export interface TokenUsage {
+  /** Total input for ONE request, including cache subsets; required for tiered prices. */
+  requestInputTokens?: number;
   /** UNCACHED input tokens (see header — subtract cached subsets first). */
   inputTokens?: number;
   outputTokens?: number;
@@ -138,6 +155,12 @@ export interface CostEstimate {
 export function costFromTokens(model: string, usage: TokenUsage): CostEstimate {
   const p = priceFor(model);
   if (!p) return { usd: 0, priced: false };
+  if (p.longContext && (usage.requestInputTokens === undefined || !Number.isFinite(usage.requestInputTokens) || usage.requestInputTokens < 0)) {
+    return { usd: 0, priced: false }; // an aggregate cannot establish the request's tier
+  }
+  const long = p.longContext && usage.requestInputTokens! > p.longContext.above ? p.longContext : null;
+  const inputMultiplier = long?.inputMultiplier ?? 1;
+  const outputMultiplier = long?.outputMultiplier ?? 1;
   const n = (v: number | undefined): number =>
     typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0;
   const cacheRead = p.cacheRead ?? p.in * 0.1;
@@ -161,10 +184,8 @@ export function costFromTokens(model: string, usage: TokenUsage): CostEstimate {
     return { usd: 0, priced: false };
   }
   const usd =
-    (n(usage.inputTokens) * p.in +
-      n(usage.outputTokens) * p.out +
-      n(usage.cacheReadTokens) * cacheRead +
-      writeCost) /
+    ((n(usage.inputTokens) * p.in + n(usage.cacheReadTokens) * cacheRead + writeCost) * inputMultiplier +
+      n(usage.outputTokens) * p.out * outputMultiplier) /
     1_000_000;
   return { usd, priced: true };
 }
@@ -174,5 +195,5 @@ export function costFromTokens(model: string, usage: TokenUsage): CostEstimate {
  * input+output only, unknown models price at 0.
  */
 export function estimateCost(model: string, inputTokens: number, outputTokens: number): number {
-  return costFromTokens(model, { inputTokens, outputTokens }).usd;
+  return costFromTokens(model, { inputTokens, outputTokens, requestInputTokens: inputTokens }).usd;
 }

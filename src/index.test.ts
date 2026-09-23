@@ -42,6 +42,8 @@ describe('priceFor', () => {
   test('unknown model → null (omp local models, empty string)', () => {
     expect(priceFor('qwen2.5-coder:14b')).toBeNull();
     expect(priceFor('')).toBeNull();
+    expect(priceFor('gpt-5.99')).toBeNull();
+    expect(priceFor('claude-opus-5-99')).toBeNull();
   });
 });
 
@@ -51,11 +53,12 @@ describe('costFromTokens', () => {
     ['openai-codex/gpt-5.6-sol:xhigh', 21.16],
     ['gpt-5.6', 21.16],
     ['gpt-5.6-terra:high', 12.58],
-    ['gpt-6-astra:xhigh', 52.9],
+    ['gpt-6-astra:xhigh', 80.8],
   ])('prices %s using its own tier, including cached reads and writes', (model, expected) => {
     expect(costFromTokens(model, {
       inputTokens: 100_000, outputTokens: 1_000_000,
       cacheReadTokens: 400_000, cacheCreationTokens: 120_000,
+      requestInputTokens: 620_000,
     })).toEqual({ usd: expected, priced: true });
   });
   test('a dated Luna variant uses the Luna rate instead of the family alias', () => {
@@ -116,7 +119,7 @@ describe('costFromTokens', () => {
     expect(costFromTokens('claude-opus-4-8', usage)).toEqual({ priced: false, usd: 0 });
   });
   test.each([
-    ['claude-sonnet-5[1m]:high', 18],
+    ['claude-sonnet-5[1m]:high', 12],
     ['claude-fable-5[1m]:xhigh', 60],
   ])('current Claude 5 model %s is priced instead of persisted as NULL', (model, expectedUsd) => {
     expect(
@@ -135,6 +138,18 @@ describe('costFromTokens', () => {
       outputTokens: Number.NaN,
     });
     expect(usd).toBe(0);
+  });
+  test.each([
+    ['gpt-6-sol', 2, 0.2, 2.5, 10],
+    ['gpt-6-luna', 0.1, 0.01, 0.125, 0.5],
+  ] as const)('prices %s at the exact short/long boundary, counting cached tokens in context', (model, input, read, write, output) => {
+    const usage = { inputTokens: 2000, cacheReadTokens: 260_000, cacheCreationTokens: 10_000, outputTokens: 1000 };
+    expect(costFromTokens(model, { ...usage, requestInputTokens: 272_000 }).usd).toBeCloseTo((2000 * input + 260_000 * read + 10_000 * write + 1000 * output) / 1e6);
+    expect(costFromTokens(model, { ...usage, requestInputTokens: 272_001 }).usd).toBeCloseTo(((2000 * input + 260_000 * read + 10_000 * write) * 2 + 1000 * output * 1.5) / 1e6);
+    expect(costFromTokens(model, usage)).toEqual({ priced: false, usd: 0 });
+  });
+  test.each([['claude-opus-5-5', 0.2], ['claude-fable-5-1', 0.25]] as const)('uses the current cache-read rate for %s instead of the older prefix rate', (model, cachedUsd) => {
+    expect(costFromTokens(model, { cacheReadTokens: 1_000_000 })).toEqual({ priced: true, usd: cachedUsd });
   });
 });
 
