@@ -110,6 +110,8 @@ describe('costFromTokens', () => {
     })).toEqual({ priced: true, usd: 8.625 });
   });
   test.each([
+    { inputTokens: 100, cacheCreationTokens: 0, cacheCreationUnreported: true },
+    { cacheCreationTokens: 1000, cacheCreationUnreported: true },
     { cacheCreationTokens: 1000, cacheCreation1hTokens: 1000 },
     { cacheCreationTokens: 1000, cacheCreation5mTokens: 0, cacheCreation1hTokens: 999 },
     { cacheCreationTokens: 1000, cacheCreation5mTokens: -1, cacheCreation1hTokens: 1001 },

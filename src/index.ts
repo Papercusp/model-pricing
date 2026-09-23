@@ -137,6 +137,8 @@ export interface TokenUsage {
   outputTokens?: number;
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
+  /** The source did not report writes; any numeric value is only a lower bound. */
+  cacheCreationUnreported?: boolean;
   /** Reported Anthropic cache-write tiers; provide both, including measured zeroes. */
   cacheCreation5mTokens?: number;
   cacheCreation1hTokens?: number;
@@ -155,6 +157,7 @@ export interface CostEstimate {
 export function costFromTokens(model: string, usage: TokenUsage): CostEstimate {
   const p = priceFor(model);
   if (!p) return { usd: 0, priced: false };
+  if (usage.cacheCreationUnreported) return { usd: 0, priced: false };
   if (p.longContext && (usage.requestInputTokens === undefined || !Number.isFinite(usage.requestInputTokens) || usage.requestInputTokens < 0)) {
     return { usd: 0, priced: false }; // an aggregate cannot establish the request's tier
   }
