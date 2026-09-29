@@ -63,6 +63,10 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   // Legacy opus (4.1 and earlier) kept the old price point.
   'claude-opus-4-1': { in: 15.0, out: 75.0 },
   'claude-opus-4-0': { in: 15.0, out: 75.0 },
+  // Verified 2026-09-29 (same pricing page): $2/$10, cache read 0.1× and 5m write
+  // 1.25× — the defaults. Needs its own key: `priceFor` does not prefix-match
+  // `claude-sonnet-5-5` onto `claude-sonnet-5`, so without it every sample is unpriced.
+  'claude-sonnet-5-5': { in: 2.0, out: 10.0 },
   'claude-sonnet-5': { in: 2.0, out: 10.0 },
   'claude-sonnet-4-6': { in: 3.0, out: 15.0 },
   'claude-sonnet-4-5': { in: 3.0, out: 15.0 },

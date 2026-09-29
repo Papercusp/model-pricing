@@ -157,6 +157,9 @@ describe('costFromTokens', () => {
   test.each([['claude-opus-5-5', 0.2], ['claude-fable-5-1', 0.25]] as const)('uses the current cache-read rate for %s instead of the older prefix rate', (model, cachedUsd) => {
     expect(costFromTokens(model, { cacheReadTokens: 1_000_000 })).toEqual({ priced: true, usd: cachedUsd });
   });
+  test('prices claude-sonnet-5-5 (a sibling id, not a prefix variant of claude-sonnet-5)', () => {
+    expect(costFromTokens('claude-sonnet-5-5[1m]', { inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 1_000_000, cacheCreationTokens: 1_000_000 })).toEqual({ priced: true, usd: 2 + 10 + 0.2 + 2.5 });
+  });
 });
 
 describe('estimateCost (testing-shell back-compat shape)', () => {
