@@ -146,6 +146,8 @@ describe('costFromTokens', () => {
     expect(usd).toBe(0);
   });
   test.each([
+    ['gpt-6.1-sol', 2, 0.1, 2.5, 10],
+    ['openai-codex/gpt-6.1-sol:max', 2, 0.1, 2.5, 10],
     ['gpt-6-sol', 2, 0.2, 2.5, 10],
     ['gpt-6-luna', 0.1, 0.01, 0.125, 0.5],
   ] as const)('prices %s at the exact short/long boundary, counting cached tokens in context', (model, input, read, write, output) => {
