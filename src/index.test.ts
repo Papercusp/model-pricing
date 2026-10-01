@@ -1,11 +1,52 @@
 import { describe, expect, test } from 'vitest';
 import {
   MODEL_PRICES,
+  PRICE_TABLE_VERSION,
   costFromTokens,
   estimateCost,
   normalizeModelId,
   priceFor,
+  priceTableVersion,
+  type ModelPrice,
 } from './index';
+
+// WI-10004517: stored estimates are stamped with this version, and the repricer treats any
+// other stamp as stale. These cases are what make "a price changed" detectable at all.
+describe('priceTableVersion', () => {
+  const clone = (): Record<string, ModelPrice> => JSON.parse(JSON.stringify(MODEL_PRICES));
+
+  test('the exported constant is the live table version, 16 hex chars', () => {
+    expect(PRICE_TABLE_VERSION).toBe(priceTableVersion(MODEL_PRICES));
+    expect(PRICE_TABLE_VERSION).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  test('changes when any single price changes', () => {
+    const table = clone();
+    table['gpt-6-luna'] = { ...table['gpt-6-luna']!, in: table['gpt-6-luna']!.in + 0.01 };
+    expect(priceTableVersion(table)).not.toBe(PRICE_TABLE_VERSION);
+  });
+
+  test('changes when a model is added or removed', () => {
+    const added = { ...clone(), 'gpt-test-new': { in: 1, out: 2 } };
+    const removed = clone();
+    delete removed['gpt-6-luna'];
+    expect(priceTableVersion(added)).not.toBe(PRICE_TABLE_VERSION);
+    expect(priceTableVersion(removed)).not.toBe(PRICE_TABLE_VERSION);
+  });
+
+  test('changes when a long-context tier changes', () => {
+    const table = clone();
+    table['gpt-6-sol'] = { ...table['gpt-6-sol']!, longContext: { above: 200_000, inputMultiplier: 2, outputMultiplier: 1.5 } };
+    expect(priceTableVersion(table)).not.toBe(PRICE_TABLE_VERSION);
+  });
+
+  test('ignores key order, so reordering the source does not re-price history', () => {
+    const reversed = Object.fromEntries(
+      Object.entries(clone()).reverse().map(([k, v]) => [k, Object.fromEntries(Object.entries(v).reverse())]),
+    ) as Record<string, ModelPrice>;
+    expect(priceTableVersion(reversed)).toBe(PRICE_TABLE_VERSION);
+  });
+});
 
 describe('normalizeModelId', () => {
   test('strips vendor prefix', () => {
