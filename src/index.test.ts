@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import {
   MODEL_PRICES,
   PRICE_TABLE_VERSION,
+  PRICING_RULES_REVISION,
   costFromTokens,
   estimateCost,
   normalizeModelId,
@@ -38,6 +39,13 @@ describe('priceTableVersion', () => {
     const table = clone();
     table['gpt-6-sol'] = { ...table['gpt-6-sol']!, longContext: { above: 200_000, inputMultiplier: 2, outputMultiplier: 1.5 } };
     expect(priceTableVersion(table)).not.toBe(PRICE_TABLE_VERSION);
+  });
+
+  // D-020: a stored estimate is a function of table AND rules, so a rule change must stale it.
+  test('changes when the rules revision changes, with the table untouched', () => {
+    expect(priceTableVersion(MODEL_PRICES, PRICING_RULES_REVISION)).toBe(PRICE_TABLE_VERSION);
+    expect(priceTableVersion(MODEL_PRICES, PRICING_RULES_REVISION + 1)).not.toBe(PRICE_TABLE_VERSION);
+    expect(priceTableVersion(MODEL_PRICES, PRICING_RULES_REVISION - 1)).not.toBe(PRICE_TABLE_VERSION);
   });
 
   test('ignores key order, so reordering the source does not re-price history', () => {
@@ -213,6 +221,59 @@ describe('costFromTokens', () => {
     expect(costFromTokens('gpt-5.4-mini:medium', perMillion).usd).toBeCloseTo(flat);
     // 272K is the model's max input, so a request at the gpt-5.4 long-context edge still bills flat.
     expect(costFromTokens('gpt-5.4-mini', { ...perMillion, requestInputTokens: 272_001 }).usd).toBeCloseTo(flat);
+  });
+});
+
+// D-020: usage ledgers price an unknown tier at its floor and say so, instead of erasing cost.
+describe("costFromTokens { unknownTier: 'floor' }", () => {
+  // A live gpt-6-astra session aggregate (agent_usage_samples id 120573, 2026-09-17), stored at
+  // $11.472932 before the long-context tier existed: exactly the standard-context price.
+  const astraAggregate = { inputTokens: 366_710, outputTokens: 9_444, cacheReadTokens: 7_333_632 };
+
+  test('an aggregate of a long-context model refuses by default and floors on request', () => {
+    expect(costFromTokens('gpt-6-astra', astraAggregate)).toEqual({ usd: 0, priced: false });
+    const floor = costFromTokens('gpt-6-astra', astraAggregate, { unknownTier: 'floor' });
+    expect(floor.priced).toBe(true);
+    expect(floor.bound).toBe('lower');
+    expect(floor.usd).toBeCloseTo(11.472932, 9);
+  });
+
+  test('the long-context floor is the standard-tier price and never exceeds the long-tier price', () => {
+    const floor = costFromTokens('gpt-6-astra', astraAggregate, { unknownTier: 'floor' });
+    const standard = costFromTokens('gpt-6-astra', { ...astraAggregate, requestInputTokens: 1_000 });
+    const long = costFromTokens('gpt-6-astra', { ...astraAggregate, requestInputTokens: 400_000 });
+    expect(floor.usd).toBe(standard.usd);
+    expect(floor.usd).toBeLessThan(long.usd);
+  });
+
+  test('a usage whose tier is known prices exactly under floor mode, with no bound', () => {
+    for (const requestInputTokens of [1_000, 400_000]) {
+      const usage = { ...astraAggregate, requestInputTokens };
+      expect(costFromTokens('gpt-6-astra', usage, { unknownTier: 'floor' })).toEqual(costFromTokens('gpt-6-astra', usage));
+    }
+    const tiered = { inputTokens: 10, outputTokens: 5, cacheCreationTokens: 300, cacheCreation5mTokens: 100, cacheCreation1hTokens: 200 };
+    expect(costFromTokens('claude-opus-4-7', tiered, { unknownTier: 'floor' })).toEqual(costFromTokens('claude-opus-4-7', tiered));
+  });
+
+  test('cache writes with no TTL split floor at the 5-minute rate', () => {
+    const usage = { inputTokens: 2_000, outputTokens: 1_000, cacheReadTokens: 50_000, cacheCreationTokens: 40_000 };
+    const unknown = { ...usage, cacheCreationTierUnknown: true };
+    expect(costFromTokens('claude-opus-4-7', unknown)).toEqual({ usd: 0, priced: false });
+    const floor = costFromTokens('claude-opus-4-7', unknown, { unknownTier: 'floor' });
+    const fiveMinute = costFromTokens('claude-opus-4-7', { ...usage, cacheCreation5mTokens: 40_000, cacheCreation1hTokens: 0 });
+    const oneHour = costFromTokens('claude-opus-4-7', { ...usage, cacheCreation5mTokens: 0, cacheCreation1hTokens: 40_000 });
+    expect(floor).toEqual({ usd: fiveMinute.usd, priced: true, bound: 'lower' });
+    expect(floor.usd).toBeLessThan(oneHour.usd);
+  });
+
+  test('floor mode still refuses what has no floor', () => {
+    const opts = { unknownTier: 'floor' } as const;
+    expect(costFromTokens('mystery-model', astraAggregate, opts)).toEqual({ usd: 0, priced: false });
+    expect(costFromTokens('claude-opus-4-7', { inputTokens: 10, cacheCreationUnreported: true }, opts))
+      .toEqual({ usd: 0, priced: false });
+    expect(costFromTokens('claude-opus-4-7', {
+      inputTokens: 10, cacheCreationTokens: 300, cacheCreation5mTokens: 100, cacheCreation1hTokens: 100,
+    }, opts)).toEqual({ usd: 0, priced: false });
   });
 });
 
