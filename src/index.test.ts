@@ -150,6 +150,10 @@ describe('costFromTokens', () => {
     ['openai-codex/gpt-6.1-sol:max', 2, 0.1, 2.5, 10],
     ['gpt-6-sol', 2, 0.2, 2.5, 10],
     ['gpt-6-luna', 0.1, 0.01, 0.125, 0.5],
+    // WI-10004502: the Scout ideator sends exactly this spec; an unpriced model
+    // makes llm-client's Codex path throw before any call is made.
+    ['gpt-5.4', 2.5, 0.25, 2.5, 15],
+    ['gpt-5.4:medium', 2.5, 0.25, 2.5, 15],
   ] as const)('prices %s at the exact short/long boundary, counting cached tokens in context', (model, input, read, write, output) => {
     const usage = { inputTokens: 2000, cacheReadTokens: 260_000, cacheCreationTokens: 10_000, outputTokens: 1000 };
     expect(costFromTokens(model, { ...usage, requestInputTokens: 272_000 }).usd).toBeCloseTo((2000 * input + 260_000 * read + 10_000 * write + 1000 * output) / 1e6);
