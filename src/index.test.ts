@@ -166,6 +166,13 @@ describe('costFromTokens', () => {
   test('prices claude-sonnet-5-5 (a sibling id, not a prefix variant of claude-sonnet-5)', () => {
     expect(costFromTokens('claude-sonnet-5-5[1m]', { inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 1_000_000, cacheCreationTokens: 1_000_000 })).toEqual({ priced: true, usd: 2 + 10 + 0.2 + 2.5 });
   });
+  test('prices gpt-5.4-mini flat (its own rates, not gpt-5.4 and no long-context tier) — WI-10004506', () => {
+    const perMillion = { inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 1_000_000, cacheCreationTokens: 1_000_000 };
+    const flat = 0.75 + 4.5 + 0.075 + 0.75;
+    expect(costFromTokens('gpt-5.4-mini:medium', perMillion).usd).toBeCloseTo(flat);
+    // 272K is the model's max input, so a request at the gpt-5.4 long-context edge still bills flat.
+    expect(costFromTokens('gpt-5.4-mini', { ...perMillion, requestInputTokens: 272_001 }).usd).toBeCloseTo(flat);
+  });
 });
 
 describe('estimateCost (testing-shell back-compat shape)', () => {

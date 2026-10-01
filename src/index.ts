@@ -104,6 +104,10 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   // Missing entry made every Scout ideator call throw (WI-10004502).
   'gpt-5.4': { in: 2.5, out: 15.0, cacheRead: 0.25, cacheWrite: 2.5,
     longContext: { above: 272_000, inputMultiplier: 2, outputMultiplier: 1.5 } },
+  // Verified 2026-10-01: https://developers.openai.com/api/docs/models/gpt-5.4-mini
+  // (400K context, max input 272K, so no long-context tier). In the gateway's
+  // Codex lineup; found unpriced by configured-models-priced.test.ts (WI-10004506).
+  'gpt-5.4-mini': { in: 0.75, out: 4.5, cacheRead: 0.075, cacheWrite: 0.75 },
   // OpenAI-direct models used by LLM-testing hosts (e.g. Restart's Scout SUT).
   'gpt-4o-mini': { in: 0.15, out: 0.6 },
   'gpt-4o': { in: 2.5, out: 10.0 },
