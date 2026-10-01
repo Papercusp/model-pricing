@@ -114,6 +114,40 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
 };
 
 /**
+ * Content version of a price table: two 32-bit FNV-1a hashes (different offset bases) of its
+ * canonical JSON (keys sorted at every level), as 16 hex characters.
+ *
+ * Derived, never hand-maintained: ANY edit to a price changes it, so a stored estimate stamped
+ * with an older version is detectably stale (WI-10004517). Not a security hash; it only has to
+ * change when the table does. No BigInt and no node:crypto, so every consumer target compiles.
+ */
+export function priceTableVersion(table: Readonly<Record<string, ModelPrice>> = MODEL_PRICES): string {
+  const text = canonicalJson(table);
+  const fnv1a = (offsetBasis: number): string => {
+    let hash = offsetBasis >>> 0;
+    for (let i = 0; i < text.length; i++) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    return hash.toString(16).padStart(8, '0');
+  };
+  return fnv1a(0x811c9dc5) + fnv1a(0x050c5d1f);
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  const entries = Object.keys(value as Record<string, unknown>)
+    .filter((k) => (value as Record<string, unknown>)[k] !== undefined)
+    .sort()
+    .map((k) => `${JSON.stringify(k)}:${canonicalJson((value as Record<string, unknown>)[k])}`);
+  return `{${entries.join(',')}}`;
+}
+
+/** The version of the live `MODEL_PRICES` table. Writers stamp it beside every estimate. */
+export const PRICE_TABLE_VERSION: string = priceTableVersion(MODEL_PRICES);
+
+/**
  * Normalize a model id for lookup: lowercase, strip a vendor prefix
  * (`openai-codex/gpt-5` → `gpt-5`) and an effort/variant suffix
  * (`gpt-5.5:xhigh` → `gpt-5.5`).
