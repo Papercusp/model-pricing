@@ -114,15 +114,29 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
 };
 
 /**
- * Content version of a price table: two 32-bit FNV-1a hashes (different offset bases) of its
- * canonical JSON (keys sorted at every level), as 16 hex characters.
+ * Revision of the RULES `costFromTokens` applies to a usage (tier selection, floors, refusals).
+ * Bump it whenever the same usage under the same table would price differently: a stored estimate
+ * is a function of table AND rules, so a rule change must make old stamps stale exactly like a
+ * price change does (agent-economy-flywheel-2026-08-30 D-020).
+ *   1: the original rules.
+ *   2: `unknownTier: 'floor'` — an unknown long-context or cache-write tier prices at its floor.
+ */
+export const PRICING_RULES_REVISION = 2;
+
+/**
+ * Content version of a price table under a rules revision: two 32-bit FNV-1a hashes (different
+ * offset bases) of its canonical JSON (keys sorted at every level) plus the revision, as 16 hex
+ * characters.
  *
  * Derived, never hand-maintained: ANY edit to a price changes it, so a stored estimate stamped
  * with an older version is detectably stale (WI-10004517). Not a security hash; it only has to
  * change when the table does. No BigInt and no node:crypto, so every consumer target compiles.
  */
-export function priceTableVersion(table: Readonly<Record<string, ModelPrice>> = MODEL_PRICES): string {
-  const text = canonicalJson(table);
+export function priceTableVersion(
+  table: Readonly<Record<string, ModelPrice>> = MODEL_PRICES,
+  rulesRevision: number = PRICING_RULES_REVISION,
+): string {
+  const text = `${canonicalJson(table)}\u0000rules:${rulesRevision}`;
   const fnv1a = (offsetBasis: number): string => {
     let hash = offsetBasis >>> 0;
     for (let i = 0; i < text.length; i++) {
@@ -201,17 +215,55 @@ export interface CostEstimate {
   usd: number;
   /** False for an unknown model or unreconciled write tier — persist NULL, not 0. */
   priced: boolean;
+  /**
+   * `'lower'` only under `unknownTier: 'floor'`, when a tier the usage cannot establish was
+   * priced at its cheapest rate: the true cost is at least `usd`. Persist the bound with the cost.
+   */
+  bound?: 'lower';
 }
 
+export interface CostOptions {
+  /**
+   * What to do when the usage cannot establish a price TIER: an aggregate with no request size
+   * for a model with a long-context tier, or cache writes with no TTL split.
+   * `'refuse'` (default) returns `priced: false`. `'floor'` prices the tier at its cheapest rate
+   * and returns `bound: 'lower'` — for usage ledgers, where a marked lower bound beats erasing
+   * cost that was measured (D-020). An unknown model, unreported cache writes and an inconsistent
+   * tier breakdown still refuse: none of them has a floor that is not a guess.
+   */
+  unknownTier?: 'refuse' | 'floor';
+}
+
+/**
+ * The options every usage-LEDGER writer prices with (one row per request or per aggregate, kept
+ * and re-derived later). One constant, so the writers and their re-pricer cannot drift apart.
+ */
+export const USAGE_LEDGER_PRICING: Readonly<CostOptions> = Object.freeze({ unknownTier: 'floor' });
+
 /** Estimate cost from token counts at list price. Provider-reported cost always wins over this. */
-export function costFromTokens(model: string, usage: TokenUsage): CostEstimate {
+export function costFromTokens(model: string, usage: TokenUsage, options: CostOptions = {}): CostEstimate {
+  const floor = options.unknownTier === 'floor';
+  let bounded = false;
   const p = priceFor(model);
   if (!p) return { usd: 0, priced: false };
   if (usage.cacheCreationUnreported) return { usd: 0, priced: false };
-  if (p.longContext && (usage.requestInputTokens === undefined || !Number.isFinite(usage.requestInputTokens) || usage.requestInputTokens < 0)) {
-    return { usd: 0, priced: false }; // an aggregate cannot establish the request's tier
+  let long: NonNullable<ModelPrice['longContext']> | null = null;
+  if (p.longContext) {
+    const size = usage.requestInputTokens;
+    if (size === undefined || !Number.isFinite(size) || size < 0) {
+      // An aggregate cannot establish the request's tier. Its floor takes the cheaper of the
+      // two rates per component (multipliers capped at 1), whatever mix of requests it holds.
+      if (!floor) return { usd: 0, priced: false };
+      bounded = true;
+      long = {
+        above: p.longContext.above,
+        inputMultiplier: Math.min(1, p.longContext.inputMultiplier),
+        outputMultiplier: Math.min(1, p.longContext.outputMultiplier),
+      };
+    } else if (size > p.longContext.above) {
+      long = p.longContext;
+    }
   }
-  const long = p.longContext && usage.requestInputTokens! > p.longContext.above ? p.longContext : null;
   const inputMultiplier = long?.inputMultiplier ?? 1;
   const outputMultiplier = long?.outputMultiplier ?? 1;
   const n = (v: number | undefined): number =>
@@ -234,13 +286,16 @@ export function costFromTokens(model: string, usage: TokenUsage): CostEstimate {
     // is a reconciliation check, not a second set of tokens to charge for.
     writeCost = fiveMinute * p.in * 1.25 + oneHour * p.in * 2;
   } else if (usage.cacheCreationTierUnknown && n(usage.cacheCreationTokens) > 0) {
-    return { usd: 0, priced: false };
+    if (!floor) return { usd: 0, priced: false };
+    // Every write at the 5-minute rate (1.25x input, against 2x for 1-hour) is the floor.
+    bounded = true;
+    writeCost = n(usage.cacheCreationTokens) * p.in * 1.25;
   }
   const usd =
     ((n(usage.inputTokens) * p.in + n(usage.cacheReadTokens) * cacheRead + writeCost) * inputMultiplier +
       n(usage.outputTokens) * p.out * outputMultiplier) /
     1_000_000;
-  return { usd, priced: true };
+  return bounded ? { usd, priced: true, bound: 'lower' } : { usd, priced: true };
 }
 
 /**
