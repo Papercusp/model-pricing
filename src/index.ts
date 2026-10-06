@@ -38,6 +38,8 @@ export interface ModelPrice {
   cacheRead?: number;
   /** USD per 1M cache-creation tokens. Default: `in × 1.25`. */
   cacheWrite?: number;
+  /** Explicit USD per 1M one-hour cache writes for a scoped price. */
+  cacheWrite1h?: number;
   /** Full-request input threshold; not an aggregate across multiple requests. */
   longContext?: { above: number; inputMultiplier: number; outputMultiplier: number };
 }
@@ -120,8 +122,9 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
  * price change does (agent-economy-flywheel-2026-08-30 D-020).
  *   1: the original rules.
  *   2: `unknownTier: 'floor'` — an unknown long-context or cache-write tier prices at its floor.
+ *   3: explicit route prices, cache rates and safe arithmetic; no cross-route fallback.
  */
-export const PRICING_RULES_REVISION = 2;
+export const PRICING_RULES_REVISION = 3;
 
 /**
  * Content version of a price table under a rules revision: two 32-bit FNV-1a hashes (different
@@ -223,6 +226,11 @@ export interface CostEstimate {
 }
 
 export interface CostOptions {
+  /** A caller-bound provider/model list price. Present null/undefined REFUSES
+   * lookup; variants must never fall back to the bare-model table. Scoped cache
+   * rates are explicit, without the table's provider-specific multipliers.
+   * This is token-list estimation only, not account fees or an invoice. */
+  price?: ModelPrice | null;
   /**
    * What to do when the usage cannot establish a price TIER: an aggregate with no request size
    * for a model with a long-context tier, or cache writes with no TTL split.
@@ -244,8 +252,24 @@ export const USAGE_LEDGER_PRICING: Readonly<CostOptions> = Object.freeze({ unkno
 export function costFromTokens(model: string, usage: TokenUsage, options: CostOptions = {}): CostEstimate {
   const floor = options.unknownTier === 'floor';
   let bounded = false;
-  const p = priceFor(model);
+  const scoped = Object.hasOwn(options, 'price');
+  const p = scoped ? options.price : priceFor(model);
   if (!p) return { usd: 0, priced: false };
+  if (scoped) {
+    const validRate = (v: unknown): v is number => typeof v === 'number'
+      && Number.isFinite(v) && v >= 0 && v <= Number.MAX_SAFE_INTEGER;
+    const validCount = (v: unknown): v is number => typeof v === 'number'
+      && Number.isSafeInteger(v) && v >= 0;
+    if (!validRate(p.in) || !validRate(p.out)
+        || [p.cacheRead, p.cacheWrite, p.cacheWrite1h].some((v) => v !== undefined && !validRate(v))
+        || [usage.inputTokens, usage.outputTokens, usage.cacheReadTokens, usage.cacheCreationTokens,
+          usage.cacheCreation5mTokens, usage.cacheCreation1hTokens, usage.requestInputTokens]
+          .some((v) => v !== undefined && !validCount(v))
+        || (p.longContext && (!validCount(p.longContext.above)
+          || !validRate(p.longContext.inputMultiplier) || !validRate(p.longContext.outputMultiplier)))) {
+      return { usd: 0, priced: false };
+    }
+  }
   if (usage.cacheCreationUnreported) return { usd: 0, priced: false };
   let long: NonNullable<ModelPrice['longContext']> | null = null;
   if (p.longContext) {
@@ -268,8 +292,9 @@ export function costFromTokens(model: string, usage: TokenUsage, options: CostOp
   const outputMultiplier = long?.outputMultiplier ?? 1;
   const n = (v: number | undefined): number =>
     typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0;
-  const cacheRead = p.cacheRead ?? p.in * 0.1;
-  const cacheWrite = p.cacheWrite ?? p.in * 1.25;
+  if (scoped && n(usage.cacheReadTokens) > 0 && p.cacheRead === undefined) return { usd: 0, priced: false };
+  const cacheRead = p.cacheRead ?? (scoped ? 0 : p.in * 0.1);
+  const cacheWrite = p.cacheWrite ?? (scoped ? 0 : p.in * 1.25);
   let writeCost = n(usage.cacheCreationTokens) * cacheWrite;
   const hasWriteTiers = usage.cacheCreation5mTokens !== undefined || usage.cacheCreation1hTokens !== undefined;
   if (hasWriteTiers) {
@@ -284,7 +309,18 @@ export function costFromTokens(model: string, usage: TokenUsage, options: CostOp
     ) return { usd: 0, priced: false };
     // These tier fields are provider-reported Anthropic quantities. The aggregate
     // is a reconciliation check, not a second set of tokens to charge for.
-    writeCost = fiveMinute * p.in * 1.25 + oneHour * p.in * 2;
+    if (scoped && ((fiveMinute > 0 && p.cacheWrite === undefined)
+        || (oneHour > 0 && p.cacheWrite1h === undefined))) return { usd: 0, priced: false };
+    writeCost = scoped
+      ? fiveMinute * cacheWrite + oneHour * (p.cacheWrite1h ?? 0)
+      : fiveMinute * p.in * 1.25 + oneHour * p.in * 2;
+  } else if (scoped && n(usage.cacheCreationTokens) > 0) {
+    // Aggregate writes cannot establish which scoped TTL price applied. The
+    // table's Anthropic floor is not a documented floor for an arbitrary route.
+    if (p.cacheWrite === undefined || usage.cacheCreationTierUnknown
+        || (p.cacheWrite1h !== undefined && p.cacheWrite1h !== p.cacheWrite)) {
+      return { usd: 0, priced: false };
+    }
   } else if (usage.cacheCreationTierUnknown && n(usage.cacheCreationTokens) > 0) {
     if (!floor) return { usd: 0, priced: false };
     // Every write at the 5-minute rate (1.25x input, against 2x for 1-hour) is the floor.
@@ -295,6 +331,7 @@ export function costFromTokens(model: string, usage: TokenUsage, options: CostOp
     ((n(usage.inputTokens) * p.in + n(usage.cacheReadTokens) * cacheRead + writeCost) * inputMultiplier +
       n(usage.outputTokens) * p.out * outputMultiplier) /
     1_000_000;
+  if (!Number.isFinite(usd) || usd > Number.MAX_SAFE_INTEGER) return { usd: 0, priced: false };
   return bounded ? { usd, priced: true, bound: 'lower' } : { usd, priced: true };
 }
 

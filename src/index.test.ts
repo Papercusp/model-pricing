@@ -101,6 +101,61 @@ describe('priceFor', () => {
 });
 
 describe('costFromTokens', () => {
+  test('uses an explicit route price without normalizing the model or falling back', () => {
+    expect(costFromTokens('openrouter/openai/gpt-5.5:free', {
+      inputTokens: 1_000_000, outputTokens: 1_000_000,
+    }, { price: { in: 0, out: 0 } })).toEqual({ usd: 0, priced: true });
+    expect(costFromTokens('gpt-5.5', { inputTokens: 10 }, { price: null }))
+      .toEqual({ usd: 0, priced: false });
+  });
+
+  test('requires explicit cache rates only for cache tokens actually measured', () => {
+    const price = { in: 2, out: 3 };
+    expect(costFromTokens('ignored', { inputTokens: 10, cacheReadTokens: 0 }, { price }).priced).toBe(true);
+    expect(costFromTokens('ignored', { cacheReadTokens: 1 }, { price }).priced).toBe(false);
+    expect(costFromTokens('ignored', { cacheCreationTokens: 1 }, { price }).priced).toBe(false);
+    expect(costFromTokens('ignored', { cacheReadTokens: 10, cacheCreationTokens: 10 }, {
+      price: { ...price, cacheRead: 0, cacheWrite: 0 },
+    })).toEqual({ usd: 0, priced: true });
+  });
+
+  test('prices explicit write TTL splits without substituting Anthropic multipliers', () => {
+    const price = { in: 2, out: 3, cacheWrite: 7, cacheWrite1h: 11 };
+    expect(costFromTokens('ignored', {
+      cacheCreationTokens: 1_000_000, cacheCreation5mTokens: 400_000, cacheCreation1hTokens: 600_000,
+    }, { price })).toEqual({ usd: 9.4, priced: true });
+    expect(costFromTokens('ignored', { cacheCreationTokens: 1, cacheCreationTierUnknown: true }, {
+      price, unknownTier: 'floor',
+    }).priced).toBe(false);
+    expect(costFromTokens('ignored', { cacheCreation5mTokens: 0, cacheCreation1hTokens: 1 }, {
+      price: { in: 2, out: 3, cacheWrite: 7 },
+    }).priced).toBe(false);
+  });
+
+  test('uses the full request input to select an explicit long-context price', () => {
+    const price = { in: 2, out: 3, cacheRead: 0.5,
+      longContext: { above: 200_000, inputMultiplier: 2, outputMultiplier: 1.5 } };
+    expect(costFromTokens('ignored', { requestInputTokens: 250_000, inputTokens: 50_000,
+      cacheReadTokens: 200_000, outputTokens: 100_000 }, { price }))
+      .toEqual({ usd: 0.85, priced: true });
+    expect(costFromTokens('ignored', { inputTokens: 50_000 }, { price }).priced).toBe(false);
+  });
+
+  test.each([-1, NaN, Infinity, 1e20])('refuses invalid explicit rate %s', (value) => {
+    expect(costFromTokens('gpt-5.5', { inputTokens: 10 }, { price: { in: value, out: 1 } }).priced).toBe(false);
+    expect(costFromTokens('gpt-5.5', { inputTokens: 10 }, { price: { in: 1, out: 1, cacheRead: value } }).priced).toBe(false);
+  });
+
+  test.each([-1, NaN, Infinity, 0.5, 1e20])('refuses invalid explicit token count %s', (value) => {
+    expect(costFromTokens('ignored', { inputTokens: value }, { price: { in: 1, out: 1 } }).priced).toBe(false);
+  });
+
+  test('refuses arithmetic overflow instead of persisting an infinite estimate', () => {
+    expect(costFromTokens('ignored', { inputTokens: Number.MAX_SAFE_INTEGER }, {
+      price: { in: Number.MAX_SAFE_INTEGER, out: 1 },
+    }).priced).toBe(false);
+  });
+
   test.each([
     ['gpt-5.6-luna:medium', 1.258],
     ['openai-codex/gpt-5.6-sol:xhigh', 21.16],
