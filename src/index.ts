@@ -179,21 +179,32 @@ export function normalizeModelId(model: string): string {
   return m;
 }
 
-/** Resolve a price entry. Exact (raw, then normalized), then longest-prefix match. Null when unknown. */
-export function priceFor(model: string): ModelPrice | null {
+/**
+ * The price key `model` matches among `keys` (default: every key of {@link MODEL_PRICES}). Exact (raw, then
+ * normalized), then the longest key of which `model` is a DATED snapshot. Null when none matches. Callers that
+ * pinned a key list at an earlier time (a benchmark's registry snapshot) pass it, so a later table edit cannot
+ * change what an old record resolves to.
+ */
+export function priceKeyFor(model: string, keys: readonly string[] = Object.keys(MODEL_PRICES)): string | null {
   if (!model) return null;
-  if (Object.hasOwn(MODEL_PRICES, model)) return MODEL_PRICES[model];
+  if (keys.includes(model)) return model;
   const norm = normalizeModelId(model);
-  if (Object.hasOwn(MODEL_PRICES, norm)) return MODEL_PRICES[norm];
+  if (keys.includes(norm)) return norm;
   let best: string | null = null;
-  for (const key of Object.keys(MODEL_PRICES)) {
+  for (const key of keys) {
     // Only dated snapshots inherit a price. A future family/tier is unknown,
     // not automatically the price of an older prefix (e.g. gpt-5.99 → gpt-5).
     if (norm.startsWith(key) && /^-(?:\d{8}|\d{4}-\d{2}(?:-\d{2})?)$/.test(norm.slice(key.length)) && (best === null || key.length > best.length)) {
       best = key;
     }
   }
-  return best ? MODEL_PRICES[best] : null;
+  return best;
+}
+
+/** Resolve a price entry via {@link priceKeyFor}. Null when unknown. */
+export function priceFor(model: string): ModelPrice | null {
+  const key = priceKeyFor(model);
+  return key !== null && Object.hasOwn(MODEL_PRICES, key) ? MODEL_PRICES[key] : null;
 }
 
 export interface TokenUsage {

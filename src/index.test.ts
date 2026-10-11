@@ -7,9 +7,29 @@ import {
   estimateCost,
   normalizeModelId,
   priceFor,
+  priceKeyFor,
   priceTableVersion,
   type ModelPrice,
 } from './index';
+
+describe('priceKeyFor — the one matching rule priceFor uses, over a caller-pinned key list', () => {
+  test('defaults to the live table and agrees with priceFor', () => {
+    expect(priceKeyFor('claude-opus-4-1')).toBe('claude-opus-4-1');
+    expect(priceKeyFor('anthropic/claude-opus-4-1-20250805')).toBe('claude-opus-4-1');
+    expect(priceFor('claude-opus-4-1-20250805')).toBe(MODEL_PRICES['claude-opus-4-1']);
+    expect(priceKeyFor('mystery-model')).toBeNull();
+    expect(priceKeyFor('')).toBeNull();
+  });
+
+  test('a pinned key list is the whole universe: a later table entry cannot widen it', () => {
+    const pinned = ['claude-opus-4-0', 'gpt-5'];
+    expect(priceKeyFor('claude-opus-4-1', pinned)).toBeNull();
+    expect(priceKeyFor('claude-opus-4-1-20250805', pinned)).toBeNull();
+    expect(priceKeyFor('claude-opus-4-0-20250514', pinned)).toBe('claude-opus-4-0');
+    // A newer tier is not a dated snapshot of an older key.
+    expect(priceKeyFor('gpt-5.99', pinned)).toBeNull();
+  });
+});
 
 // WI-10004517: stored estimates are stamped with this version, and the repricer treats any
 // other stamp as stale. These cases are what make "a price changed" detectable at all.
